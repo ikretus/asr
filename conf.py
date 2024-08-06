@@ -1,8 +1,6 @@
-import datetime
 import json
 import os
 
-AUID_LEN = 10
 DAYS_TO_SCAN = 8
 DAYS_TO_TEST = 8
 MAX_CPU = 2
@@ -12,8 +10,7 @@ SAMPLE_WAV = {
     "en": os.path.join(ROOT_DIR, "../whisper.cpp/samples/sample_en.wav"),
     "ru": os.path.join(ROOT_DIR, "../whisper.cpp/samples/sample_ru.wav")
 }
-TODAY = datetime.datetime.now()
-
+SLEEP_TIME = 1.0
 WHISPER = {
     "exec": "whisper",
     "model": {
