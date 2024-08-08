@@ -1,16 +1,17 @@
 import conf
 import json
 import os
-import psycopg2
 import random
 import shutil
 import subprocess
 import sys
 import time
 import uuid
+
 from datetime import datetime, timedelta
 from glob import glob
 from operator import itemgetter
+from psycopg2 import Error, connect
 
 TODAY = datetime.now()
 
@@ -19,7 +20,7 @@ def gen_data(connector=None):
     for i in range(conf.DAYS_TO_TEST):
         dt = (TODAY - timedelta(i)).strftime("%y%m%d")
         os.makedirs(dt, exist_ok=True)
-        auid = str(uuid.uuid1())
+        auid = str(uuid.uuid4())
         lang = ("ru", "en")[random.randint(0, 1)]
         model = "lev%s" % random.randint(0, 4)
         if connector is not None:
@@ -27,7 +28,6 @@ def gen_data(connector=None):
                 print("AUID(%s) not created in DATABASE" % auid)
         os.popen("cp %s %s/%s_%s_%s.%s" % (conf.SAMPLE_WAV[lang], dt, auid, lang, model, "win"))
         os.wait()
-        time.sleep(0.01)
 
 
 def get_auid(fn):
@@ -104,30 +104,31 @@ def run(cmds, connector=None, mode="test", it=0):
         ps = remove_finished(ps, connector)
 
 
-def init_connector(conf):
+def init_connector(conf, create_table=True):
     try:
-        connector = psycopg2.connect(database=conf["database"], user=conf["user"], password=conf["password"],
-                                     host=conf["host"], port=conf["port"])
+        connector = connect(database=conf["database"], user=conf["user"], password=conf["password"],
+                            host=conf["host"], port=conf["port"])
         connector.autocommit = True
-    except psycopg2.Error as err:
+    except Error as err:
         print(err)
         return None
-    query = """
-    CREATE TABLE IF NOT EXISTS %s (
-        auid uuid NOT NULL PRIMARY KEY,
-        lang char(2) NOT NULL,
-        model char(4) NOT NULL,
-        loaded timestamp NOT NULL DEFAULT now(),
-        processing timestamp, failed timestamp, success timestamp,
-        log text, result jsonb, target jsonb
-    ) """ % conf["table"]
-    try:
-        with connector:
-            with connector.cursor() as cur:
-                cur.execute(query)
-    except psycopg2.Error as err:
-        print(err)
-        return None
+    if create_table:
+        query = """
+        CREATE TABLE IF NOT EXISTS %s (
+            auid uuid NOT NULL PRIMARY KEY,
+            lang char(2) NOT NULL,
+            model char(4) NOT NULL,
+            loaded timestamp NOT NULL DEFAULT now(),
+            processing timestamp, failed timestamp, success timestamp,
+            log text, result jsonb, target jsonb
+        ) """ % conf["table"]
+        try:
+            with connector:
+                with connector.cursor() as cur:
+                    cur.execute(query)
+        except Error as err:
+            print(err)
+            return None
     return connector
 
 
@@ -138,7 +139,7 @@ def create_auid(connector, auid, lang, model, mode="test"):
             with connector.cursor() as cur:
                 query = "INSERT INTO " + table + "(auid, lang, model) VALUES (%s, %s, %s)"
                 cur.execute(query, (auid, lang, model))
-    except psycopg2.Error as err:
+    except Error as err:
         print(err)
         return False
     return True
@@ -158,7 +159,7 @@ def update_status(connector, auid, val, mode="test"):
                 else:
                     query = "UPDATE " + table + " SET log = %s WHERE auid = %s"
                     cur.execute(query, (val, auid))
-    except psycopg2.Error as err:
+    except Error as err:
         print(err)
         return False
     return True
