@@ -3,6 +3,7 @@ import os
 
 DAYS_TO_SCAN = 8
 DAYS_TO_TEST = 8
+FETCH_MANY = 100
 MAX_CPU = 2
 N_THREAD = "2"
 ROOT_DIR = os.path.join(os.environ["HOME"], "devel/asr")
