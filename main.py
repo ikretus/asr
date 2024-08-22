@@ -186,11 +186,10 @@ if __name__ == "__main__":
     if mode == "test":
         gen_data(connector)
 
-    inp = input_files()
+    inp = [conf.WHISPER["exec"] + [lang(fn), "-f", fn, "-m", model(fn), "-of", fn[:-4]] for fn in input_files()]
     if inp:
         print("input queue length = %s" % len(inp), flush=True)
-        run([[conf.WHISPER["exec"], "-p", "1", "-t", conf.N_THREAD, "-ng", "-ojf", "-l", lang(fn), "-f", fn,
-              "-m", model(fn), "-of", fn[:-4]] for fn in inp], connector, mode, 10)
+        run(inp, connector, mode, 10)
 
     if connector is not None:
         connector.close()

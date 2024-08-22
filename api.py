@@ -10,6 +10,7 @@ from main import Error, TODAY, fext, init_connector, create_auid
 
 MODE = "data"
 app = Flask(__name__)
+app.config["JSON_AS_ASCII"] = False
 
 
 @app.errorhandler(404)

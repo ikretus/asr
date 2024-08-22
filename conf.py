@@ -13,7 +13,7 @@ SAMPLE_WAV = {
 }
 SLEEP_TIME = 1.0
 WHISPER = {
-    "exec": "whisper",
+    "exec": ["whisper", "-p", "1", "-t", N_THREAD, "-ng", "-oj", "-l"],
     "model": {
         "path": os.path.join(ROOT_DIR, "../whisper.cpp/models"),
         "1": {"lev0": 0.15, "lev1": 0.19, "lev2": 0.92, "lev3": 2.1, "lev4": 3.9},
