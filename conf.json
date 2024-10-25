@@ -14,5 +14,7 @@
         "password": "12345",
         "host": "localhost",
         "port": 5432
-    }
+    },
+    "max_cpu": 2,
+    "n_thread": 2
 }
