@@ -1,7 +1,8 @@
 import json
 import os
 
-ROOT_DIR: str = os.path.join(os.environ["HOME"], "devel/asr")
+ROOT_DIR = os.path.join(os.environ["HOME"], "devel/asr")
+DATA_DIR = os.path.join(ROOT_DIR, "data")
 
 with open(os.path.join(ROOT_DIR, "conf.json")) as ff:
     CONF = json.loads(ff.read())

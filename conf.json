@@ -1,20 +1,10 @@
 {
-    "test": {
-        "table": "test",
-        "database": "asr",
-        "user": "asr_user",
-        "password": "12345",
-        "host": "localhost",
-        "port": 5432
-    },
-    "data": {
-        "table": "test",
-        "database": "asr",
-        "user": "asr_user",
-        "password": "12345",
-        "host": "localhost",
-        "port": 5432
-    },
+    "database": "asr",
+    "host": "localhost",
     "max_cpu": 2,
-    "n_thread": 2
+    "n_thread": 2,
+    "password": "12345",
+    "port": 5432,
+    "table": "test",
+    "user": "asr_user"
 }

@@ -3,12 +3,12 @@ import os
 import shutil
 import uuid
 
-from conf import CONF, ROOT_DIR, SAMPLE_WAV, WHISPER
+from conf import CONF, DATA_DIR, SAMPLE_WAV, WHISPER
+from datetime import datetime
 from flask import Flask, abort, make_response, request
 from markupsafe import escape
-from main import Error, TODAY, init_connector, create_auid
+from main import Error, init_connector, create_auid
 
-MODE = "data"
 FETCH_MANY = 100
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False
@@ -35,7 +35,7 @@ def load_audio():
     except Exception as err:
         return make_response({"error": "[SYS] %s" % str(err)}, 500)
 
-    connector = init_connector(CONF[MODE])
+    connector = init_connector(CONF)
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 
@@ -43,8 +43,8 @@ def load_audio():
     cmd = "ffmpeg -hide_banner -v error -i %s -ar 16000 -ac 1 -c:a pcm_s16le %s 2>&1"
     with os.popen(cmd % (auid, wav)) as pipe:
         if os.wait()[1] == 0:
-            root = os.path.join(ROOT_DIR, MODE, TODAY.strftime("%y%m%d"))
-            if create_auid(connector, auid, lang, model, MODE):
+            root = os.path.join(DATA_DIR, datetime.now().strftime("%y%m%d"))
+            if create_auid(connector, auid, lang, model):
                 os.makedirs(root, exist_ok=True)
                 shutil.move(wav, os.path.join(root, wav))
                 resp = make_response({"auid": auid, "status": "loaded"}, 202)
@@ -60,11 +60,11 @@ def load_audio():
 
 @app.get("/<uuid:auid>")
 def get_status_or_result(auid=None):
-    auid, connector = escape(auid), init_connector(CONF[MODE], False)
+    auid, connector = escape(auid), init_connector(CONF, False)
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 
-    query = "SELECT loaded, processing, failed, log, result FROM " + CONF[MODE]["table"] + " WHERE auid = %s"
+    query = "SELECT loaded, processing, failed, log, result FROM " + CONF["table"] + " WHERE auid = %s"
     try:
         with connector:
             with connector.cursor() as cur:
@@ -86,11 +86,11 @@ def get_status_or_result(auid=None):
 
 @app.get("/")
 def get_multi_status():
-    res, connector = list(), init_connector(CONF[MODE], False)
+    res, connector = list(), init_connector(CONF, False)
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 
-    query = "SELECT auid, loaded, processing, failed, success FROM " + CONF[MODE]["table"] + " ORDER BY loaded DESC"
+    query = "SELECT auid, loaded, processing, failed, success FROM " + CONF["table"] + " ORDER BY loaded DESC"
     try:
         with connector:
             with connector.cursor() as cur:
