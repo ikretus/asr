@@ -4,3 +4,6 @@ __pycache__
 data
 test
 *.log
+*.mp3
+*.wav
+*.pyc
