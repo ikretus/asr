@@ -25,20 +25,21 @@ def whisper(fn, path=None):
 
 
 def make_test_env(connector, n):
-    dt, fns = datetime.now().strftime("%y%m%d"), list()
-    os.makedirs(dt, exist_ok=True)
+    fns = list()
     for i in range(n):
         auid = str(uuid.uuid4())
         lang = ("ru", "en")[random.randint(0, 1)]
         model = "lev%s" % random.randint(0, 4)
-        create_auid(connector, auid, lang, model)
-        fns.append("%s/%s_%s_%s.wav" % (dt, auid, lang, model))
-        os.popen("cp %s %s" % (SAMPLE_WAV[lang], fns[-1]))
-        os.wait()
+        if create_auid(connector, auid, lang, model):
+            dt = datetime.now().strftime("%y%m%d")
+            os.makedirs(dt, exist_ok=True)
+            fns.append("%s/%s_%s_%s.wav" % (dt, auid, lang, model))
+            os.popen("cp %s %s" % (SAMPLE_WAV[lang], fns[-1]))
+            os.wait()
 
     fn, fn2 = random.sample(fns, 2)
-    update_status(connector, get_auid(fn), "processing", datetime.now())
-    update_status(connector, get_auid(fn2), "processing", datetime.now())
+    update_status(connector, get_auid(fn))
+    update_status(connector, get_auid(fn2))
     subprocess.Popen(whisper(fn, path="."), stdout=open(fext(fn, "log"), "w"), stderr=subprocess.STDOUT)
 
 
@@ -70,11 +71,11 @@ def wait_proc(fn, proc, connector):
     elif status == 0:
         wlog(auid, "i", "success")
         with open(fext(fn, "json")) as ff:
-            update_status(connector, auid, "success", json.loads(ff.read()))
+            update_status(connector, auid, json.loads(ff.read()))
     else:
         with open(fext(fn, "log")) as ff:
             wlog(auid, "e", " ".join(ff.read().split("\n")[:5]))
-        update_status(connector, auid, "failed", "error:whisper")
+        update_status(connector, auid, "error:whisper")
     return False
 
 
@@ -84,7 +85,7 @@ def run(inp, connector, sleep=5.0):
         auid = get_auid(fn)
         ps.append((fn, subprocess.Popen(cmd, stdout=open(fext(fn, "log"), "w"), stderr=subprocess.STDOUT)))
         wlog(auid, "i", "processing")
-        update_status(connector, auid, "processing", datetime.now())
+        update_status(connector, auid)
     while len(ps) > 0:
         time.sleep(sleep)
         ps = [(fn, proc) for (fn, proc) in ps if wait_proc(fn, proc, connector)]
@@ -102,7 +103,7 @@ def check_proc(connector, t_coef=2):
         wlog("db", "e", str(err).replace("\n", " "))
         return 0
     if not proc:
-        return 0
+        return CONF["max_cpu"]
 
     ps, fn_pid = os.popen("ps --no-headers --cols 1000 -C whisper -o pid,cmd").readlines(), dict()
     os.wait()
@@ -121,16 +122,16 @@ def check_proc(connector, t_coef=2):
                     try:
                         os.kill(pid, 9)
                         wlog(it[0], "w", "killed")
-                        update_status(connector, it[0], "failed", "killed:toolong")
+                        update_status(connector, it[0], "killed:toolong")
                     except Exception as err:
-                        wlog("pkill", "e", str(err).replace("\n", " "))
+                        wlog("task", "e", str(err).replace("\n", " "))
                 else:
                     if it[5] == 1:
                         wlog(it[0], "w", "attempt resumed")
-                        update_status(connector, it[0], "processing", None)
+                        update_status(connector, it[0], 0)
                     else:
                         wlog(it[0], "w", "attempt failed")
-                        update_status(connector, it[0], "failed", "failed:attempt")
+                        update_status(connector, it[0], "failed:attempt")
     return CONF["max_cpu"] - len(fn_pid)
 
 
@@ -175,23 +176,23 @@ def create_auid(connector, auid, lang, model):
     return True
 
 
-def update_status(connector, auid, key, val):
+def update_status(connector, auid, val=None):
     table = CONF["table"]
     try:
         with connector:
             with connector.cursor() as cur:
-                if key == "processing":
-                    query = "UPDATE " + table + " SET processing = %s, attempt = attempt + 1 WHERE auid = %s"
-                    cur.execute(query, (val, auid))
-                elif key == "failed":
-                    query = "UPDATE " + table + " SET failed = now(), log = %s WHERE auid = %s"
-                    cur.execute(query, (val, auid))
-                elif key == "success":
+                if val is None:
+                    query = "UPDATE " + table + " SET processing = now(), attempt = attempt + 1 WHERE auid = %s"
+                    cur.execute(query, [auid])
+                elif val == 0:
+                    query = "UPDATE " + table + " SET processing = NULL WHERE auid = %s"
+                    cur.execute(query, [auid])
+                elif isinstance(val, dict):
                     query = "UPDATE " + table + " SET success = now(), log = %s, result = %s WHERE auid = %s"
                     cur.execute(query, ("success", json.dumps(val["transcription"]), auid))
-                elif key == "target":
-                    query = "UPDATE " + table + " SET target = %s WHERE auid = %s"
-                    cur.execute(query, (json.dumps(val), auid))
+                else:
+                    query = "UPDATE " + table + " SET failed = now(), log = %s WHERE auid = %s"
+                    cur.execute(query, (val, auid))
     except Error as err:
         wlog(auid, "e", str(err).replace("\n", " "))
 
@@ -203,10 +204,10 @@ if __name__ == "__main__":
         if len(sys.argv) == 2 and sys.argv[1].isdecimal():
             make_test_env(connector, int(sys.argv[1]))
         else:
-            n = check_proc(connector)
+            n = check_proc(connector, CONF["ttl"])
             if n > 0:
                 inp = get_input(connector)
                 if inp:
-                    wlog("task", "i", "new = %s, queue = %s" % (n, len(inp)))
+                    wlog("task", "i", "check = %s, input = %s" % (n, len(inp)))
                     run([(fn, whisper(fn)) for fn in inp[:n]], connector)
     connector.close()

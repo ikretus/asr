@@ -43,8 +43,8 @@ def load_audio():
     cmd = "ffmpeg -hide_banner -v error -i %s -ar 16000 -ac 1 -c:a pcm_s16le %s 2>&1"
     with os.popen(cmd % (auid, wav)) as pipe:
         if os.wait()[1] == 0:
-            root = os.path.join(DATA_DIR, datetime.now().strftime("%y%m%d"))
             if create_auid(connector, auid, lang, model):
+                root = os.path.join(DATA_DIR, datetime.now().strftime("%y%m%d"))
                 os.makedirs(root, exist_ok=True)
                 shutil.move(wav, os.path.join(root, wav))
                 resp = make_response({"auid": auid, "status": "loaded"}, 202)

@@ -6,5 +6,6 @@
     "password": "12345",
     "port": 5432,
     "table": "test",
+    "ttl": 6,
     "user": "asr_user"
 }
