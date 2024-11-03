@@ -20,7 +20,7 @@ def whisper(fn, path=None):
     m = os.path.join(WHISPER["model"]["path"], fext(fn.rsplit("_", 1)[1], "bin"))
     cmd = WHISPER["exec"] + [fn.rsplit("_", 2)[1], "-f", fn, "-m", m, "-of", fn[:-4]]
     if path is not None:
-        cmd[0] = "%s/%s" % (path, cmd[0])
+        cmd[0] = path
     return cmd
 
 
@@ -38,9 +38,11 @@ def make_test_env(connector, n):
             os.wait()
 
     fn, fn2 = random.sample(fns, 2)
-    update_status(connector, get_auid(fn))
     update_status(connector, get_auid(fn2))
-    subprocess.Popen(whisper(fn, path="."), stdout=open(fext(fn, "log"), "w"), stderr=subprocess.STDOUT)
+    cmd = os.path.join(DATA_DIR, "whisper")
+    if os.path.exists(cmd):
+        update_status(connector, get_auid(fn))
+        subprocess.Popen(whisper(fn, cmd), stdout=open(fext(fn, "log"), "w"), stderr=subprocess.STDOUT)
 
 
 def fext(fn, ext="wav"):
@@ -51,7 +53,7 @@ def get_auid(fn):
     return fn.split("_", 1)[0][7:]
 
 
-def get_input(connector):
+def get_input(connector, size):
     query = "SELECT auid, lang, model, loaded FROM " + CONF["table"] + " WHERE processing IS NULL ORDER BY loaded"
     try:
         with connector:
@@ -61,7 +63,7 @@ def get_input(connector):
     except Error as err:
         wlog("db", "e", str(err).replace("\n", " "))
         return list()
-    return [it for it in inp if os.path.exists(it)]
+    return [it for it in inp if os.path.exists(it) and os.path.getsize(it) > size]
 
 
 def wait_proc(fn, proc, connector):
@@ -69,13 +71,20 @@ def wait_proc(fn, proc, connector):
     if status is None:
         return True
     elif status == 0:
-        wlog(auid, "i", "success")
-        with open(fext(fn, "json")) as ff:
-            update_status(connector, auid, json.loads(ff.read()))
+        try:
+            with open(fext(fn, "json")) as ff:
+                update_status(connector, auid, json.loads(ff.read()))
+            wlog(auid, "i", "success")
+        except FileNotFoundError:
+            update_status(connector, auid, "error:whisper")
+            wlog(auid, "e", ".json not found")
     else:
-        with open(fext(fn, "log")) as ff:
-            wlog(auid, "e", " ".join(ff.read().split("\n")[:5]))
         update_status(connector, auid, "error:whisper")
+        try:
+            with open(fext(fn, "log")) as ff:
+                wlog(auid, "e", " ".join(ff.read().split("\n")[:5]))
+        except FileNotFoundError:
+            wlog(auid, "e", ".log not found")
     return False
 
 
@@ -160,7 +169,6 @@ def init_connector(conf, create_table=True):
                     cur.execute(query)
         except Error as err:
             wlog("db", "e", str(err).replace("\n", " "))
-            return None
     return connector
 
 
@@ -206,8 +214,8 @@ if __name__ == "__main__":
         else:
             n = check_proc(connector, CONF["ttl"])
             if n > 0:
-                inp = get_input(connector)
+                inp = get_input(connector, CONF["wav_min_size"])
                 if inp:
                     wlog("task", "i", "check = %s, input = %s" % (n, len(inp)))
                     run([(fn, whisper(fn)) for fn in inp[:n]], connector)
-    connector.close()
+        connector.close()

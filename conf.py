@@ -11,8 +11,10 @@ SAMPLE_WAV = {
     "en": os.path.join(ROOT_DIR, "../dnn/whisper.cpp/samples/sample_en.wav"),
     "ru": os.path.join(ROOT_DIR, "../dnn/whisper.cpp/samples/sample_ru.wav")
 }
+
+ojf = "-ojf" if CONF["output_json_full"] else "-oj"
 WHISPER = {
-    "exec": ["whisper", "-p", "1", "-t", str(CONF["n_thread"]), "-ng", "-oj", "-l"],
+    "exec": ["whisper", "-p", "1", "-t", str(CONF["n_thread"]), "-ng", ojf, "-l"],
     "model": {
         "path": os.path.join(ROOT_DIR, "../dnn/whisper.cpp/models"),
         1: {"lev0": 0.15, "lev1": 0.19, "lev2": 0.92, "lev3": 2.1, "lev4": 3.9},

@@ -3,9 +3,11 @@
     "host": "localhost",
     "max_cpu": 2,
     "n_thread": 2,
+    "output_json_full": false,
     "password": "12345",
     "port": 5432,
     "table": "test",
     "ttl": 6,
-    "user": "asr_user"
+    "user": "asr_user",
+    "wav_min_size": 32000
 }
