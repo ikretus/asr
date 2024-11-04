@@ -35,7 +35,7 @@ def load_audio():
     except Exception as err:
         return make_response({"error": "[SYS] %s" % str(err)}, 500)
 
-    connector = init_connector(CONF)
+    connector = init_connector(True)
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 
@@ -60,7 +60,7 @@ def load_audio():
 
 @app.get("/<uuid:auid>")
 def get_status_or_result(auid=None):
-    auid, connector = escape(auid), init_connector(CONF, False)
+    auid, connector = escape(auid), init_connector()
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 
@@ -86,7 +86,7 @@ def get_status_or_result(auid=None):
 
 @app.get("/")
 def get_multi_status():
-    res, connector = list(), init_connector(CONF, False)
+    res, connector = list(), init_connector()
     if connector is None:
         return make_response({"error": "[DB] connector unavailable"}, 500)
 

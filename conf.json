@@ -1,13 +1,18 @@
 {
+    "create_table": false,
     "database": "asr",
     "host": "localhost",
     "max_cpu": 2,
+    "model_dir": "~/devel/dnn/whisper.cpp/models",
+    "n_proc": 1,
     "n_thread": 2,
     "output_json_full": false,
     "password": "12345",
     "port": 5432,
+    "sample_dir": "~/devel/dnn/whisper.cpp/samples",
     "table": "test",
     "ttl": 6,
     "user": "asr_user",
-    "wav_min_size": 32000
+    "wav_min_size": 32000,
+    "whisper": "whisper"
 }

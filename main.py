@@ -53,7 +53,7 @@ def get_auid(fn):
     return fn.split("_", 1)[0][7:]
 
 
-def get_input(connector, size):
+def get_input(connector):
     query = "SELECT auid, lang, model, loaded FROM " + CONF["table"] + " WHERE processing IS NULL ORDER BY loaded"
     try:
         with connector:
@@ -63,7 +63,7 @@ def get_input(connector, size):
     except Error as err:
         wlog("db", "e", str(err).replace("\n", " "))
         return list()
-    return [it for it in inp if os.path.exists(it) and os.path.getsize(it) > size]
+    return [it for it in inp if os.path.exists(it) and os.path.getsize(it) > CONF["wav_min_size"]]
 
 
 def wait_proc(fn, proc, connector):
@@ -100,7 +100,7 @@ def run(inp, connector, sleep=5.0):
         ps = [(fn, proc) for (fn, proc) in ps if wait_proc(fn, proc, connector)]
 
 
-def check_proc(connector, t_coef=2):
+def check_proc(connector):
     query = "SELECT auid, lang, model, loaded, processing, attempt FROM " + CONF["table"] + \
             " WHERE processing IS NOT NULL AND failed IS NULL AND success IS NULL"
     try:
@@ -124,7 +124,7 @@ def check_proc(connector, t_coef=2):
     for it in proc:
         fn = "%s/%s_%s_%s.wav" % (it[3].strftime("%y%m%d"), it[0], it[1], it[2])
         if os.path.exists(fn):
-            ttl = t_coef * os.path.getsize(fn) * WHISPER["model"][CONF["n_thread"]][it[2]] / 32000.
+            ttl = CONF["ttl"] * os.path.getsize(fn) * WHISPER["model"][CONF["n_thread"]][it[2]] / 32000.
             if (datetime.now() - it[4]).total_seconds() > ttl:
                 pid = fn_pid.pop(fn, None)
                 if pid is not None:
@@ -144,10 +144,10 @@ def check_proc(connector, t_coef=2):
     return CONF["max_cpu"] - len(fn_pid)
 
 
-def init_connector(conf, create_table=True):
+def init_connector(create_table=False):
     try:
-        connector = connect(database=conf["database"], user=conf["user"], password=conf["password"],
-                            host=conf["host"], port=conf["port"])
+        connector = connect(database=CONF["database"], user=CONF["user"], password=CONF["password"],
+                            host=CONF["host"], port=CONF["port"])
         connector.autocommit = True
     except Error as err:
         wlog("db", "e", str(err).replace("\n", " "))
@@ -162,13 +162,14 @@ def init_connector(conf, create_table=True):
             loaded timestamp NOT NULL DEFAULT now(),
             processing timestamp, failed timestamp, success timestamp,
             log text, result jsonb, target jsonb
-        ) """ % conf["table"]
+        ) """ % CONF["table"]
         try:
             with connector:
                 with connector.cursor() as cur:
                     cur.execute(query)
         except Error as err:
             wlog("db", "e", str(err).replace("\n", " "))
+            connector.close()
     return connector
 
 
@@ -206,15 +207,15 @@ def update_status(connector, auid, val=None):
 
 
 if __name__ == "__main__":
-    connector = init_connector(CONF)
+    connector = init_connector(CONF["create_table"])
     if connector is not None:
         os.chdir(DATA_DIR)
         if len(sys.argv) == 2 and sys.argv[1].isdecimal():
             make_test_env(connector, int(sys.argv[1]))
         else:
-            n = check_proc(connector, CONF["ttl"])
+            n = check_proc(connector)
             if n > 0:
-                inp = get_input(connector, CONF["wav_min_size"])
+                inp = get_input(connector)
                 if inp:
                     wlog("task", "i", "check = %s, input = %s" % (n, len(inp)))
                     run([(fn, whisper(fn)) for fn in inp[:n]], connector)
