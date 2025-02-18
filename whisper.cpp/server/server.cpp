@@ -4,14 +4,19 @@
 #include "httplib.h"
 #include "json.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <cstdio>
-#include <string>
-#include <thread>
-#include <vector>
 #include <cstring>
+#include <fstream>
+#include <thread>
+#include <string>
 #include <sstream>
+#include <vector>
+
+#include <unicode/regex.h>
+#include <unicode/unistr.h>
+
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -34,7 +39,7 @@ struct server_params
     std::string hostname = "127.0.0.1";
     std::string public_path = "examples/server/public";
     std::string request_path = "";
-    std::string inference_path = "/inference";
+    std::string inference_path = "/rt";
 
     int32_t port          = 8080;
     int32_t read_timeout  = 600;
@@ -78,20 +83,18 @@ struct whisper_params {
     bool use_gpu         = true;
     bool flash_attn      = false;
     bool suppress_nst    = false;
+    bool single_segment  = false;
 
-    std::string language        = "en";
+    std::string language        = "ru";
     std::string prompt          = "";
     std::string font_path       = "/System/Library/Fonts/Supplemental/Courier New Bold.ttf";
     std::string model           = "models/ggml-base.en.bin";
 
     std::string response_format     = json_format;
-
-    // [TDRZ] speaker turn string
     std::string tdrz_speaker_turn = " [SPEAKER_TURN]"; // TODO: set from command line
-
     std::string openvino_encode_device = "CPU";
-
     std::string dtw = "";
+    std::string vocab;
 };
 
 void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params, const server_params& sparams) {
@@ -124,21 +127,24 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -pr,       --print-realtime    [%-7s] print output in realtime\n",                       params.print_realtime ? "true" : "false");
     fprintf(stderr, "  -pp,       --print-progress    [%-7s] print progress\n",                                 params.print_progress ? "true" : "false");
     fprintf(stderr, "  -nt,       --no-timestamps     [%-7s] do not print timestamps\n",                        params.no_timestamps ? "true" : "false");
-    fprintf(stderr, "  -l LANG,   --language LANG     [%-7s] spoken language ('auto' for auto-detect)\n",       params.language.c_str());
+    fprintf(stderr, "  -l LN,     --language LN       [%-7s] spoken language ('auto' for auto-detect)\n",       params.language.c_str());
     fprintf(stderr, "  -dl,       --detect-language   [%-7s] exit after automatically detecting language\n",    params.detect_language ? "true" : "false");
     fprintf(stderr, "             --prompt PROMPT     [%-7s] initial prompt\n",                                 params.prompt.c_str());
-    fprintf(stderr, "  -m FNAME,  --model FNAME       [%-7s] model path\n",                                     params.model.c_str());
-    fprintf(stderr, "  -oved D,   --ov-e-device DNAME [%-7s] the OpenVINO device used for encode inference\n",  params.openvino_encode_device.c_str());
+    fprintf(stderr, "  -m FN,     --model FN          [%-7s] model path\n",                                     params.model.c_str());
+    fprintf(stderr, "  -oved D,   --ov-e-device D     [%-7s] the OpenVINO device used for encode inference\n",  params.openvino_encode_device.c_str());
+    fprintf(stderr, "  -ss,       --single-segment    [%-7s] force single segment output\n",                    params.single_segment ? "true" : "false");
+    fprintf(stderr, "  -ng,       --no-gpu            [%-7s] disable GPU\n",                                    params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -sns,      --suppress-nst      [%-7s] suppress non-speech tokens\n",                     params.suppress_nst ? "true" : "false");
+    fprintf(stderr, "  -nth N,    --no-speech-thold N [%-7.2f] no speech threshold\n",                          params.no_speech_thold);
+    fprintf(stderr, "  -dtw MD,   --dtw MD            [%-7s] compute token-level timestamps\n",                 params.dtw.c_str());
+    fprintf(stderr, "             --vocab FN          [%-7s] text file with vocabular\n",                       params.vocab.c_str());
     // server params
-    fprintf(stderr, "  -dtw MODEL --dtw MODEL         [%-7s] compute token-level timestamps\n", params.dtw.c_str());
-    fprintf(stderr, "  --host HOST,                   [%-7s] Hostname/ip-adress for the server\n", sparams.hostname.c_str());
-    fprintf(stderr, "  --port PORT,                   [%-7d] Port number for the server\n", sparams.port);
-    fprintf(stderr, "  --public PATH,                 [%-7s] Path to the public folder\n", sparams.public_path.c_str());
-    fprintf(stderr, "  --request-path PATH,           [%-7s] Request path for all requests\n", sparams.request_path.c_str());
-    fprintf(stderr, "  --inference-path PATH,         [%-7s] Inference path for all requests\n", sparams.inference_path.c_str());
-    fprintf(stderr, "  --convert,                     [%-7s] Convert audio to WAV, requires ffmpeg on the server\n", sparams.ffmpeg_converter ? "true" : "false");
-    fprintf(stderr, "  -sns,      --suppress-nst      [%-7s] suppress non-speech tokens\n", params.suppress_nst ? "true" : "false");
-    fprintf(stderr, "  -nth N,    --no-speech-thold N [%-7.2f] no speech threshold\n",   params.no_speech_thold);
+    fprintf(stderr, "             --host HOST         [%-7s] Hostname/ip-adress for the server\n",              sparams.hostname.c_str());
+    fprintf(stderr, "             --port PORT         [%-7d] Port number for the server\n",                     sparams.port);
+    fprintf(stderr, "             --public PATH       [%-7s] Path to the public folder\n",                      sparams.public_path.c_str());
+    fprintf(stderr, "             --request-path PATH [%-7s] Request path for all requests\n",                  sparams.request_path.c_str());
+    fprintf(stderr, "             --infer-path PATH   [%-7s] Inference path for all requests\n",                sparams.inference_path.c_str());
+    fprintf(stderr, "             --convert           [%-7s] Convert audio to WAV, requires local ffmpeg\n",    sparams.ffmpeg_converter ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
@@ -181,17 +187,19 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (arg == "-m"    || arg == "--model")           { params.model           = argv[++i]; }
         else if (arg == "-oved" || arg == "--ov-e-device")     { params.openvino_encode_device = argv[++i]; }
         else if (arg == "-dtw"  || arg == "--dtw")             { params.dtw             = argv[++i]; }
+        else if (arg == "-ss"   || arg == "--single-segment")  { params.single_segment  = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")          { params.use_gpu         = false; }
         else if (arg == "-fa"   || arg == "--flash-attn")      { params.flash_attn      = true; }
         else if (arg == "-sns"  || arg == "--suppress-nst")    { params.suppress_nst    = true; }
         else if (arg == "-nth"  || arg == "--no-speech-thold") { params.no_speech_thold = std::stof(argv[++i]); }
+        else if (                  arg == "--vocab")           { params.vocab           = argv[++i]; }
 
         // server params
         else if (                  arg == "--port")            { sparams.port        = std::stoi(argv[++i]); }
         else if (                  arg == "--host")            { sparams.hostname    = argv[++i]; }
         else if (                  arg == "--public")          { sparams.public_path = argv[++i]; }
         else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
-        else if (                  arg == "--inference-path")  { sparams.inference_path = argv[++i]; }
+        else if (                  arg == "--infer-path")      { sparams.inference_path = argv[++i]; }
         else if (                  arg == "--convert")         { sparams.ffmpeg_converter     = true; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
@@ -507,33 +515,84 @@ void get_req_parameters(const Request & req, whisper_params & params)
     }
 }
 
+std::string normalize_text(const std::string &inp) {
+    UErrorCode status = U_ZERO_ERROR;
+    const auto replacement = icu::UnicodeString("");
+    icu::RegexMatcher matcher(icu::UnicodeString("[^\\p{Letter}\\p{Decimal_Number}\\-\\s]+"), 0, status);
+
+    std::string out;
+    icu::UnicodeString text(inp.c_str());
+    text.trim().toLower().toUTF8String(out);
+
+    text = matcher.reset(text).replaceAll(replacement, status);
+    if (U_SUCCESS(status)) {
+        out.clear();
+        text.toUTF8String(out);
+    }
+    return out;
+}
+
+std::vector<std::string> read_vocab(const std::string & fname) {
+    std::vector<std::string> vocab;
+    std::ifstream ifs(fname);
+    if (!ifs.is_open()) return vocab;
+
+    std::string line;
+    while (std::getline(ifs, line)) {
+        if (line.empty()) continue;
+        vocab.push_back(std::move(normalize_text(line)));
+    }
+    return vocab;
+}
+
+int find_command(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
+    int index = -1, max_size = 0;
+    std::vector<whisper_token> intersec;
+
+    for (int i = 0; i < (int) allowed.size(); ++i ) {
+        std::set_intersection(allowed[i].begin(), allowed[i].end(), candidate.begin(), candidate.end(), std::back_inserter(intersec));
+        if (max_size < (int) intersec.size()) {
+            max_size = (int) intersec.size();
+            index = i;
+        }
+        intersec.clear();
+    }
+    return index;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
     whisper_params params;
     server_params sparams;
-
     std::mutex whisper_mutex;
+
+    std::vector<std::string> vocab;
+    std::vector<std::vector<whisper_token>> v_tokens;
 
     if (whisper_params_parse(argc, argv, params, sparams) == false) {
         whisper_print_usage(argc, argv, params, sparams);
         return 1;
     }
-
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1) {
         fprintf(stderr, "error: unknown language '%s'\n", params.language.c_str());
         whisper_print_usage(argc, argv, params, sparams);
         exit(0);
     }
-
     if (params.diarize && params.tinydiarize) {
         fprintf(stderr, "error: cannot use both --diarize and --tinydiarize\n");
         whisper_print_usage(argc, argv, params, sparams);
         exit(0);
     }
-
     if (sparams.ffmpeg_converter) {
         check_ffmpeg_availibility();
+    }
+    if (!params.vocab.empty()) {
+        vocab = read_vocab(params.vocab);
+        if (vocab.empty()) {
+            fprintf(stderr, "error: failed to read vocabulary from '%s'\n", params.vocab.c_str());
+            exit(0);
+        }
     }
     // whisper init
     struct whisper_context_params cparams = whisper_context_default_params();
@@ -590,6 +649,26 @@ int main(int argc, char ** argv) {
     if (ctx == nullptr) {
         fprintf(stderr, "error: failed to initialize whisper context\n");
         return 3;
+    }
+
+    if (!vocab.empty()) {
+        for (const auto & cmd : vocab) {
+            whisper_token tokens[1024];
+            v_tokens.emplace_back();
+            const int n = whisper_tokenize(ctx, cmd.c_str(), tokens, 1024);
+            if (n < 0) {
+                fprintf(stderr, "error: failed to tokenize command '%s'\n", cmd.c_str());
+                return 3;
+            }
+            for (int i = 0; i < n; ++i) v_tokens.back().push_back(tokens[i]);
+            std::sort(v_tokens.back().begin(), v_tokens.back().end());
+        }
+        if (vocab.size() == v_tokens.size()) {
+            printf("Vocabulary loaded and tokenized: %d items\n", (int) v_tokens.size());
+        } else {
+            fprintf(stderr, "error: vocabulary (%d) not equal to v_tokens (%d)\n", (int) vocab.size(), (int) v_tokens.size());
+            return 3;
+        }
     }
 
     // initialize openvino encoder. this has no effect on whisper.cpp builds that don't have OpenVINO configured
@@ -819,6 +898,7 @@ int main(int argc, char ** argv) {
             wparams.token_timestamps = !params.no_timestamps && params.response_format == vjson_format;
 
             wparams.suppress_nst     = params.suppress_nst;
+            wparams.single_segment   = params.single_segment;
 
             whisper_print_user_data user_data = { &params, &pcmf32s, 0 };
 
@@ -974,13 +1054,21 @@ int main(int argc, char ** argv) {
         else
         {
             std::string results = output_str(ctx, params, pcmf32s);
-            json jres = json{
-                {"text", results}
-            };
-            res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace),
-                            "application/json");
+            if (!vocab.empty()) {
+                auto text = normalize_text(results);
+                std::vector<whisper_token> k_tokens;
+                k_tokens.resize(1024);
+                const int n = whisper_tokenize(ctx, text.c_str(), k_tokens.data(), 1024);
+                if (n > 0) {
+                    k_tokens.resize(n);
+                    std::sort(k_tokens.begin(), k_tokens.end());
+                    int index = find_command(v_tokens, k_tokens);
+                    if (index != -1) results = vocab[index];
+                }
+            }
+            json jres = json{{"text", results}};
+            res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace), "application/json");
         }
-
         // reset params to their defaults
         params = default_params;
     });
