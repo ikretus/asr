@@ -240,12 +240,12 @@ static std::string normalize_text(const std::string &inp) {
 static std::vector<std::string> read_allowed_commands(const std::string & fname) {
     std::vector<std::string> allowed_commands;
     std::ifstream ifs(fname);
-    if (!ifs.is_open()) return allowed_commands;
-
-    std::string line;
-    while (std::getline(ifs, line)) {
-        if (line.empty()) continue;
-        allowed_commands.push_back(std::move(normalize_text(line)));
+    if (ifs.is_open()) {
+        std::string line;
+        while (std::getline(ifs, line)) {
+            if (line.empty()) continue;
+            allowed_commands.push_back(std::move(normalize_text(line)));
+        }
     }
     return allowed_commands;
 }

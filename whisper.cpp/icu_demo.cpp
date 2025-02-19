@@ -1,4 +1,4 @@
-// g++ -Wall -std=c++17 icu.cpp -I/usr/include -L/usr/lib/x86_64-linux-gnu -licui18n -licuuc -licudata -o icu
+// g++ -Wall -std=c++17 icu_demo.cpp -I/usr/include -L/usr/lib/x86_64-linux-gnu -licui18n -licuuc -licudata -o icu_demo
 
 #include <algorithm>
 #include <fstream>
@@ -27,22 +27,21 @@ static std::string normalize_text(const std::string &inp) {
     return out;
 }
 
-static std::vector<std::string> read_allowed_commands(const std::string & fname) {
-    std::vector<std::string> allowed_commands;
-    std::string line;
-
+static std::vector<std::string> read_vocab(const std::string & fname) {
+    std::vector<std::string> vocab;
     std::ifstream ifs(fname);
-    if (!ifs.is_open()) return allowed_commands;
-
-    while (std::getline(ifs, line)) {
-        if (line.empty()) continue;
-        allowed_commands.push_back(std::move(normalize_text(line)));
+    if (ifs.is_open()) {
+        std::string line;
+        while (std::getline(ifs, line)) {
+            if (line.empty()) continue;
+            vocab.push_back(std::move(normalize_text(line)));
+        }
     }
-    return allowed_commands;
+    return vocab;
 }
 
 int main(int argc, char ** argv) {
-    std::vector<std::string> allowed_commands = read_allowed_commands("commands.txt");
-    for (const auto & cmd : allowed_commands) fprintf(stdout, "command: %s\n", cmd.c_str());
+    std::vector<std::string> vocab = read_vocab("commands.txt");
+    for (const auto & cmd : vocab) fprintf(stdout, "command: %s\n", cmd.c_str());
     return 0;
 }
