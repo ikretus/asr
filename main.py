@@ -170,6 +170,7 @@ def init_connector(create_table=False):
         except Error as err:
             wlog("db", "e", str(err).replace("\n", " "))
             connector.close()
+            return None
     return connector
 
 
