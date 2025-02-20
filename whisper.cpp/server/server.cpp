@@ -35,8 +35,8 @@ const std::string vtt_format    = "vtt";
 
 struct server_params
 {
-    std::string hostname = "127.0.0.1";
-    std::string public_path = "examples/server/public";
+    std::string hostname = "0.0.0.0";
+    std::string public_path = "server/";
     std::string request_path = "";
     std::string inference_path = "/rt";
 
@@ -87,7 +87,7 @@ struct whisper_params {
     std::string language        = "ru";
     std::string prompt          = "";
     std::string font_path       = "/usr/share/fonts/truetype/msttcorefonts/Courier_New_Bold.ttf";
-    std::string model           = "models/ggml-base.en.bin";
+    std::string model           = "ggm.bin";
 
     std::string response_format     = json_format;
     std::string tdrz_speaker_turn = " [SPEAKER_TURN]"; // TODO: set from command line
@@ -98,19 +98,34 @@ struct whisper_params {
 
 void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params, const server_params& sparams) {
     fprintf(stderr, "\nusage: %s [options] \n\n", argv[0]);
-    fprintf(stderr, "options:\n");
+    fprintf(stderr, "main options:\n");
     fprintf(stderr, "  -h,        --help              [default] show this help message and exit\n");
-    fprintf(stderr, "  -t N,      --threads N         [%-7d] number of threads to use during computation\n",    params.n_threads);
     fprintf(stderr, "  -p N,      --processors N      [%-7d] number of processors to use during computation\n", params.n_processors);
+    fprintf(stderr, "  -t N,      --threads N         [%-7d] number of threads to use during computation\n",    params.n_threads);
+    fprintf(stderr, "  -d N,      --duration N        [%-7d] duration of audio to process in milliseconds\n",   params.duration_ms);
+    fprintf(stderr, "  -bo N,     --best-of N         [%-7d] number of best candidates to keep\n",              params.best_of);
+    fprintf(stderr, "  -bs N,     --beam-size N       [%-7d] beam size for beam search\n",                      params.beam_size);
+    fprintf(stderr, "  -l LANG,   --language LANG     [%-7s] spoken language ('auto' for auto-detect)\n",       params.language.c_str());
+    fprintf(stderr, "  -m MODEL,  --model MODEL       [%-7s] model path\n",                                     params.model.c_str());
+    fprintf(stderr, "  -ng,       --no-gpu            [%-7s] disable GPU\n",                                    params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -O DEV,    --ov-e-device DEV   [%-7s] the OpenVINO device used for encode inference\n",  params.openvino_encode_device.c_str());
+    fprintf(stderr, "  -sns,      --suppress-nst      [%-7s] suppress non-speech tokens\n",                     params.suppress_nst ? "true" : "false");
+    fprintf(stderr, "  -ss,       --single-segment    [%-7s] force single segment output\n",                    params.single_segment ? "true" : "false");
+    fprintf(stderr, "  -V FN,     --vocab FN          [%-7s] text file with vocabular\n",                       params.vocab.c_str());
+    fprintf(stderr, "server options:\n");
+    fprintf(stderr, "  -H HOST,   --host HOST         [%-7s] Hostname/ip-adress for the server\n",              sparams.hostname.c_str());
+    fprintf(stderr, "  -P PORT,   --port PORT         [%-7d] Port number for the server\n",                     sparams.port);
+    fprintf(stderr, "  -I PATH,   --infer-path PATH   [%-7s] Inference path for all requests\n",                sparams.inference_path.c_str());
+    fprintf(stderr, "  -R PATH,   --request-path PATH [%-7s] Request path for all requests\n",                  sparams.request_path.c_str());
+    fprintf(stderr, "  -F,        --convert           [%-7s] Convert audio to WAV, requires local ffmpeg\n",    sparams.ffmpeg_converter ? "true" : "false");
+    fprintf(stderr, "  -pub PATH, --public PATH       [%-7s] Path to the public folder\n",                      sparams.public_path.c_str());
+    fprintf(stderr, "other options:\n");
+    fprintf(stderr, "  -ac N,     --audio-ctx N       [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
     fprintf(stderr, "  -ot N,     --offset-t N        [%-7d] time offset in milliseconds\n",                    params.offset_t_ms);
     fprintf(stderr, "  -on N,     --offset-n N        [%-7d] segment index offset\n",                           params.offset_n);
-    fprintf(stderr, "  -d  N,     --duration N        [%-7d] duration of audio to process in milliseconds\n",   params.duration_ms);
     fprintf(stderr, "  -mc N,     --max-context N     [%-7d] maximum number of text context tokens to store\n", params.max_context);
     fprintf(stderr, "  -ml N,     --max-len N         [%-7d] maximum segment length in characters\n",           params.max_len);
     fprintf(stderr, "  -sow,      --split-on-word     [%-7s] split on word rather than on token\n",             params.split_on_word ? "true" : "false");
-    fprintf(stderr, "  -bo N,     --best-of N         [%-7d] number of best candidates to keep\n",              params.best_of);
-    fprintf(stderr, "  -bs N,     --beam-size N       [%-7d] beam size for beam search\n",                      params.beam_size);
-    fprintf(stderr, "  -ac N,     --audio-ctx N       [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
     fprintf(stderr, "  -wt N,     --word-thold N      [%-7.2f] word timestamp probability threshold\n",         params.word_thold);
     fprintf(stderr, "  -et N,     --entropy-thold N   [%-7.2f] entropy threshold for decoder fail\n",           params.entropy_thold);
     fprintf(stderr, "  -lpt N,    --logprob-thold N   [%-7.2f] log probability threshold for decoder fail\n",   params.logprob_thold);
@@ -124,24 +139,10 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -pr,       --print-realtime    [%-7s] print output in realtime\n",                       params.print_realtime ? "true" : "false");
     fprintf(stderr, "  -pp,       --print-progress    [%-7s] print progress\n",                                 params.print_progress ? "true" : "false");
     fprintf(stderr, "  -nt,       --no-timestamps     [%-7s] do not print timestamps\n",                        params.no_timestamps ? "true" : "false");
-    fprintf(stderr, "  -l LN,     --language LN       [%-7s] spoken language ('auto' for auto-detect)\n",       params.language.c_str());
     fprintf(stderr, "  -dl,       --detect-language   [%-7s] exit after automatically detecting language\n",    params.detect_language ? "true" : "false");
-    fprintf(stderr, "             --prompt PROMPT     [%-7s] initial prompt\n",                                 params.prompt.c_str());
-    fprintf(stderr, "  -m FN,     --model FN          [%-7s] model path\n",                                     params.model.c_str());
-    fprintf(stderr, "  -oved D,   --ov-e-device D     [%-7s] the OpenVINO device used for encode inference\n",  params.openvino_encode_device.c_str());
-    fprintf(stderr, "  -ss,       --single-segment    [%-7s] force single segment output\n",                    params.single_segment ? "true" : "false");
-    fprintf(stderr, "  -ng,       --no-gpu            [%-7s] disable GPU\n",                                    params.use_gpu ? "false" : "true");
-    fprintf(stderr, "  -sns,      --suppress-nst      [%-7s] suppress non-speech tokens\n",                     params.suppress_nst ? "true" : "false");
+    fprintf(stderr, "  -T,        --prompt PROMPT     [%-7s] initial prompt\n",                                 params.prompt.c_str());
     fprintf(stderr, "  -nth N,    --no-speech-thold N [%-7.2f] no speech threshold\n",                          params.no_speech_thold);
-    fprintf(stderr, "  -dtw MD,   --dtw MD            [%-7s] compute token-level timestamps\n",                 params.dtw.c_str());
-    fprintf(stderr, "             --vocab FN          [%-7s] text file with vocabular\n",                       params.vocab.c_str());
-    // server params
-    fprintf(stderr, "             --host HOST         [%-7s] Hostname/ip-adress for the server\n",              sparams.hostname.c_str());
-    fprintf(stderr, "             --port PORT         [%-7d] Port number for the server\n",                     sparams.port);
-    fprintf(stderr, "             --public PATH       [%-7s] Path to the public folder\n",                      sparams.public_path.c_str());
-    fprintf(stderr, "             --request-path PATH [%-7s] Request path for all requests\n",                  sparams.request_path.c_str());
-    fprintf(stderr, "             --infer-path PATH   [%-7s] Inference path for all requests\n",                sparams.inference_path.c_str());
-    fprintf(stderr, "             --convert           [%-7s] Convert audio to WAV, requires local ffmpeg\n",    sparams.ffmpeg_converter ? "true" : "false");
+    fprintf(stderr, "  -dtw MODEL,--dtw MODEL         [%-7s] compute token-level timestamps\n",                 params.dtw.c_str());
     fprintf(stderr, "\n");
 }
 
@@ -180,23 +181,23 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (arg == "-nt"   || arg == "--no-timestamps")   { params.no_timestamps   = true; }
         else if (arg == "-l"    || arg == "--language")        { params.language        = argv[++i]; }
         else if (arg == "-dl"   || arg == "--detect-language") { params.detect_language = true; }
-        else if (                  arg == "--prompt")          { params.prompt          = argv[++i]; }
+        else if (arg == "-T"    || arg == "--prompt")          { params.prompt          = argv[++i]; }
         else if (arg == "-m"    || arg == "--model")           { params.model           = argv[++i]; }
-        else if (arg == "-oved" || arg == "--ov-e-device")     { params.openvino_encode_device = argv[++i]; }
+        else if (arg == "-O"    || arg == "--ov-e-device")     { params.openvino_encode_device = argv[++i]; }
         else if (arg == "-dtw"  || arg == "--dtw")             { params.dtw             = argv[++i]; }
         else if (arg == "-ss"   || arg == "--single-segment")  { params.single_segment  = true; }
         else if (arg == "-ng"   || arg == "--no-gpu")          { params.use_gpu         = false; }
         else if (arg == "-fa"   || arg == "--flash-attn")      { params.flash_attn      = true; }
         else if (arg == "-sns"  || arg == "--suppress-nst")    { params.suppress_nst    = true; }
         else if (arg == "-nth"  || arg == "--no-speech-thold") { params.no_speech_thold = std::stof(argv[++i]); }
-        else if (                  arg == "--vocab")           { params.vocab           = argv[++i]; }
+        else if (arg == "-V"    || arg == "--vocab")           { params.vocab           = argv[++i]; }
         // server params
-        else if (                  arg == "--port")            { sparams.port        = std::stoi(argv[++i]); }
-        else if (                  arg == "--host")            { sparams.hostname    = argv[++i]; }
-        else if (                  arg == "--public")          { sparams.public_path = argv[++i]; }
-        else if (                  arg == "--request-path")    { sparams.request_path = argv[++i]; }
-        else if (                  arg == "--infer-path")      { sparams.inference_path = argv[++i]; }
-        else if (                  arg == "--convert")         { sparams.ffmpeg_converter     = true; }
+        else if (arg == "-P"    || arg == "--port")            { sparams.port           = std::stoi(argv[++i]); }
+        else if (arg == "-H"    || arg == "--host")            { sparams.hostname       = argv[++i]; }
+        else if (arg == "-pub"  || arg == "--public")          { sparams.public_path    = argv[++i]; }
+        else if (arg == "-R"    || arg == "--request-path")    { sparams.request_path   = argv[++i]; }
+        else if (arg == "-I"    || arg == "--infer-path")      { sparams.inference_path = argv[++i]; }
+        else if (arg == "-F"    || arg == "--convert")         { sparams.ffmpeg_converter = true; }
         else {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params, sparams);
