@@ -1,7 +1,6 @@
 ### REST API (flask)
-***
 
-- [ ] run server
+- [ ] **run server**
 ```bash
 flask --app api run --debug --host=0.0.0.0 --port=${PORT}
 ```
@@ -17,6 +16,8 @@ curl -X GET ${HOST}:${PORT}/${UUID}
 (echo -n '{"lang": "ru", "model": "lev2", "data": "'; base64 inp.mp3; echo '"}') | \
 curl -X POST -H "Content-Type: application/json" -d @- ${HOST}:${PORT}/
 ```
+***
+### WHISPER.CPP API
 
 - [ ] **build**
 ```bash
@@ -27,7 +28,7 @@ cmake -B Build -DBUILD_SHARED_LIBS=OFF -DGGML_BLAS=ON -DWHISPER_FFMPEG=ON -DWHIS
 cmake --build Build -j --config Release
 ```
 
-- [ ] **run**
+- [ ] **run server**
 ```bash
 whisper-server -t 2 -bo 5 -bs 5 -d 10000 -pr -sns -ss -m ggml.bin -V vocab.txt -H 127.0.0.1 -F
 
