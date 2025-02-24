@@ -521,7 +521,7 @@ std::vector<std::string> read_vocab(const std::string & fname) {
     return vocab;
 }
 
-int find_command(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
+int match_tokens(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
     int index = -1, max_size = 0;
     std::vector<whisper_token> intersec;
 
@@ -536,6 +536,44 @@ int find_command(std::vector<std::vector<whisper_token>> & allowed, std::vector<
     return index;
 }
 
+std::vector<whisper_token> tokenize_input(struct whisper_context * ctx, const std::set<whisper_token> & s_tokens, const std::string & inp) {
+    auto text = normalize_text(inp);
+    std::vector<whisper_token> tokens, out;
+    tokens.resize(1024);
+    const int n = whisper_tokenize(ctx, text.c_str(), tokens.data(), 1024);
+    if (n > 0) {
+        tokens.resize(n);
+        std::sort(tokens.begin(), tokens.end());
+        for (const auto & token : tokens)
+            if (s_tokens.count(token)) out.push_back(token);
+    }
+    return out;
+}
+
+bool tokenize_vocab(struct whisper_context * ctx, std::vector<std::string> & vocab, std::vector<std::vector<whisper_token>> & v_tokens, std::set<whisper_token> & s_tokens) {
+    for (const auto & item : vocab) {
+        whisper_token tokens[1024];
+        v_tokens.emplace_back();
+        const int n = whisper_tokenize(ctx, item.c_str(), tokens, 1024);
+        if (n < 0) {
+            fprintf(stderr, "error: failed to tokenize '%s'\n", item.c_str());
+            return false;
+        }
+        for (int i = 0; i < n; ++i) {
+            v_tokens.back().push_back(tokens[i]);
+            s_tokens.insert(tokens[i]);
+        }
+        std::sort(v_tokens.back().begin(), v_tokens.back().end());
+    }
+    if (vocab.size() == v_tokens.size()) {
+        printf("vocabulary tokenized: %d items, %d unique tokens\n", (int) v_tokens.size(), (int) s_tokens.size());
+    } else {
+        fprintf(stderr, "error: vocabulary (%d) not fully tokenized (%d)\n", (int) vocab.size(), (int) v_tokens.size());
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
@@ -545,6 +583,7 @@ int main(int argc, char ** argv) {
 
     std::vector<std::string> vocab;
     std::vector<std::vector<whisper_token>> v_tokens;
+    std::set<whisper_token> s_tokens;
 
     if (whisper_params_parse(argc, argv, params, sparams) == false) {
         whisper_print_usage(argc, argv, params, sparams);
@@ -626,23 +665,7 @@ int main(int argc, char ** argv) {
         return 3;
     }
     if (!vocab.empty()) {
-        for (const auto & cmd : vocab) {
-            whisper_token tokens[1024];
-            v_tokens.emplace_back();
-            const int n = whisper_tokenize(ctx, cmd.c_str(), tokens, 1024);
-            if (n < 0) {
-                fprintf(stderr, "error: failed to tokenize command '%s'\n", cmd.c_str());
-                return 3;
-            }
-            for (int i = 0; i < n; ++i) v_tokens.back().push_back(tokens[i]);
-            std::sort(v_tokens.back().begin(), v_tokens.back().end());
-        }
-        if (vocab.size() == v_tokens.size()) {
-            printf("Vocabulary loaded and tokenized: %d items\n", (int) v_tokens.size());
-        } else {
-            fprintf(stderr, "error: vocabulary (%d) not equal to v_tokens (%d)\n", (int) vocab.size(), (int) v_tokens.size());
-            return 3;
-        }
+        if (!tokenize_vocab(ctx, vocab, v_tokens, s_tokens)) return 3;
     }
 
     // initialize openvino encoder. this has no effect on whisper.cpp builds that don't have OpenVINO configured
@@ -1015,14 +1038,9 @@ int main(int argc, char ** argv) {
         {
             std::string results = output_str(ctx, params, pcmf32s);
             if (!vocab.empty()) {
-                auto text = normalize_text(results);
-                std::vector<whisper_token> k_tokens;
-                k_tokens.resize(1024);
-                const int n = whisper_tokenize(ctx, text.c_str(), k_tokens.data(), 1024);
-                if (n > 0) {
-                    k_tokens.resize(n);
-                    std::sort(k_tokens.begin(), k_tokens.end());
-                    int index = find_command(v_tokens, k_tokens);
+                auto tokens = tokenize_input(ctx, s_tokens, results);
+                if (tokens.size() > 1) {
+                    int index = match_tokens(v_tokens, tokens);
                     if (index != -1) results = vocab[index];
                 }
             }
