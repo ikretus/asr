@@ -26,13 +26,6 @@ using json = nlohmann::ordered_json;
 
 namespace {
 
-// output formats
-const std::string json_format   = "json";
-const std::string text_format   = "text";
-const std::string srt_format    = "srt";
-const std::string vjson_format  = "verbose_json";
-const std::string vtt_format    = "vtt";
-
 struct server_params
 {
     std::string hostname = "0.0.0.0";
@@ -84,12 +77,9 @@ struct whisper_params {
     bool suppress_nst    = false;
     bool single_segment  = false;
 
-    std::string language        = "ru";
-    std::string prompt          = "";
-    std::string font_path       = "/usr/share/fonts/truetype/msttcorefonts/Courier_New_Bold.ttf";
-    std::string model           = "ggm.bin";
-
-    std::string response_format     = json_format;
+    std::string language = "ru";
+    std::string prompt   = "";
+    std::string model    = "ggm.bin";
     std::string tdrz_speaker_turn = " [SPEAKER_TURN]"; // TODO: set from command line
     std::string openvino_encode_device = "CPU";
     std::string dtw = "";
@@ -173,7 +163,6 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
         else if (arg == "-tdrz" || arg == "--tinydiarize")     { params.tinydiarize     = true; }
         else if (arg == "-sow"  || arg == "--split-on-word")   { params.split_on_word   = true; }
         else if (arg == "-nf"   || arg == "--no-fallback")     { params.no_fallback     = true; }
-        else if (arg == "-fp"   || arg == "--font-path")       { params.font_path       = argv[++i]; }
         else if (arg == "-ps"   || arg == "--print-special")   { params.print_special   = true; }
         else if (arg == "-pc"   || arg == "--print-colors")    { params.print_colors    = true; }
         else if (arg == "-pr"   || arg == "--print-realtime")  { params.print_realtime  = true; }
@@ -218,11 +207,18 @@ void check_ffmpeg_availibility() {
     if (result == 0) {
         std::cout << "ffmpeg is available." << std::endl;
     } else {
-        // ffmpeg is not available
         std::cout << "ffmpeg is not found. Please ensure that ffmpeg is installed ";
         std::cout << "and that its executable is included in your system's PATH. ";
         exit(0);
     }
+}
+
+std::string now() {
+    auto now = std::chrono::system_clock::now();
+    auto t_now = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&t_now), "%Y/%m/%d-%H:%M:%S");
+    return ss.str();
 }
 
 std::string generate_temp_filename(const std::string &prefix, const std::string &extension) {
@@ -232,20 +228,14 @@ std::string generate_temp_filename(const std::string &prefix, const std::string 
     std::uniform_int_distribution<long long> dist(0, 1e9);
 
     std::stringstream ss;
-    ss << prefix
-       << "-"
-       << std::put_time(std::localtime(&now_time_t), "%Y%m%d-%H%M%S")
-       << "-"
-       << dist(rng)
-       << extension;
-
+    ss << prefix << "-" << std::put_time(std::localtime(&now_time_t), "%Y%m%d-%H%M%S") << "-" << dist(rng) << extension;
     return ss.str();
 }
 
 bool convert_to_wav(const std::string & temp_filename, std::string & error_resp) {
     std::ostringstream cmd_stream;
     std::string converted_filename_temp = temp_filename + "_temp.wav";
-    cmd_stream << "ffmpeg -hide_banner -i \"" << temp_filename << "\" -y -ar 16000 -ac 1 -c:a pcm_s16le \"" << converted_filename_temp << "\" 2>&1";
+    cmd_stream << "ffmpeg -hide_banner -v error -i \"" << temp_filename << "\" -y -ar 16000 -ac 1 -c:a pcm_s16le \"" << converted_filename_temp << "\" 2>&1";
     std::string cmd = cmd_stream.str();
 
     int status = std::system(cmd.c_str());
@@ -319,16 +309,13 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
 
     // print the last n_new segments
     const int s0 = n_segments - n_new;
-    if (s0 == 0) {
-        printf("\n");
-    }
     for (int i = s0; i < n_segments; i++) {
         if (!params.no_timestamps || params.diarize) {
             t0 = whisper_full_get_segment_t0(ctx, i);
             t1 = whisper_full_get_segment_t1(ctx, i);
         }
         if (!params.no_timestamps) {
-            printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
+            printf("%s (wserv) [%s --> %s]  ", now().c_str(), to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
         }
         if (params.diarize && pcmf32s.size() == 2) {
             speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
@@ -469,10 +456,6 @@ void get_req_parameters(const Request & req, whisper_params & params)
     {
         params.prompt = req.get_file_value("prompt").content;
     }
-    if (req.has_file("response_format"))
-    {
-        params.response_format = req.get_file_value("response_format").content;
-    }
     if (req.has_file("temperature"))
     {
         params.temperature = std::stof(req.get_file_value("temperature").content);
@@ -521,19 +504,22 @@ std::vector<std::string> read_vocab(const std::string & fname) {
     return vocab;
 }
 
-int match_tokens(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
-    int index = -1, max_size = 0;
+std::pair<int, int> match_tokens(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
+    int index = -1;
+    float score = 0.0f;
     std::vector<whisper_token> intersec;
 
     for (int i = 0; i < (int) allowed.size(); ++i ) {
         std::set_intersection(allowed[i].begin(), allowed[i].end(), candidate.begin(), candidate.end(), std::back_inserter(intersec));
-        if (max_size < (int) intersec.size()) {
-            max_size = (int) intersec.size();
+        float jaccard = ((float) intersec.size()) / (allowed[i].size() + candidate.size() - intersec.size());
+        if (score < jaccard) {
+            score = jaccard;
             index = i;
         }
         intersec.clear();
     }
-    return index;
+    printf("%s (wserv) match(%d,%d) = %.3f\n", now().c_str(), (int) allowed[index].size(), (int) candidate.size(), score);
+    return std::make_pair(index, (int)(1000 * score));
 }
 
 std::vector<whisper_token> tokenize_input(struct whisper_context * ctx, const std::set<whisper_token> & s_tokens, const std::string & inp) {
@@ -676,85 +662,8 @@ int main(int argc, char ** argv) {
                              {"Access-Control-Allow-Origin", "*"},
                              {"Access-Control-Allow-Headers", "content-type, authorization"}});
 
-    std::string const default_content = R"(
-    <html>
-    <head>
-        <title>Whisper.cpp Server</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width">
-        <style>
-        body {
-            font-family: sans-serif;
-        }
-        form {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-        }
-        label {
-            margin-bottom: 0.5rem;
-        }
-        input, select {
-            margin-bottom: 1rem;
-        }
-        button {
-            margin-top: 1rem;
-        }
-        </style>
-    </head>
-    <body>
-        <h1>Whisper.cpp Server</h1>
-
-        <h2>/inference</h2>
-        <pre>
-    curl 127.0.0.1:)" + std::to_string(sparams.port) + R"(/inference \
-    -H "Content-Type: multipart/form-data" \
-    -F file="@&lt;file-path&gt;" \
-    -F temperature="0.0" \
-    -F temperature_inc="0.2" \
-    -F response_format="json"
-        </pre>
-
-        <h2>/load</h2>
-        <pre>
-    curl 127.0.0.1:)" + std::to_string(sparams.port) + R"(/load \
-    -H "Content-Type: multipart/form-data" \
-    -F model="&lt;path-to-model-file&gt;"
-        </pre>
-
-        <div>
-            <h2>Try it out</h2>
-            <form action="/inference" method="POST" enctype="multipart/form-data">
-                <label for="file">Choose an audio file:</label>
-                <input type="file" id="file" name="file" accept="audio/*" required><br>
-
-                <label for="temperature">Temperature:</label>
-                <input type="number" id="temperature" name="temperature" value="0.0" step="0.01" placeholder="e.g., 0.0"><br>
-
-                <label for="response_format">Response Format:</label>
-                <select id="response_format" name="response_format">
-                    <option value="verbose_json">Verbose JSON</option>
-                    <option value="json">JSON</option>
-                    <option value="text">Text</option>
-                    <option value="srt">SRT</option>
-                    <option value="vtt">VTT</option>
-                </select><br>
-
-                <button type="submit">Submit</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    )";
-
     // store default params so we can reset after each inference request
     whisper_params default_params = params;
-
-    // this is only called if no index.html is found in the public --path
-    svr.Get(sparams.request_path + "/", [&default_content](const Request &, Response &res){
-        res.set_content(default_content, "text/html");
-        return false;
-    });
 
     svr.Options(sparams.request_path + sparams.inference_path, [&](const Request &, Response &){
     });
@@ -777,7 +686,7 @@ int main(int argc, char ** argv) {
         get_req_parameters(req, params);
 
         std::string filename{audio_file.filename};
-        printf("Received request: %s\n", filename.c_str());
+        printf("%s (wserv) received request: %s\n", now().c_str(), filename.c_str());
 
         // audio arrays
         std::vector<float> pcmf32;               // mono-channel F32 PCM
@@ -818,16 +727,8 @@ int main(int argc, char ** argv) {
             }
         }
 
-        printf("Successfully loaded %s\n", filename.c_str());
-        // print system information
-        {
-            fprintf(stderr, "\n");
-            fprintf(stderr, "system_info: n_threads = %d / %d | %s\n",
-                    params.n_threads*params.n_processors, std::thread::hardware_concurrency(), whisper_print_system_info());
-        }
         // print some info about the processing
         {
-            fprintf(stderr, "\n");
             if (!whisper_is_multilingual(ctx)) {
                 if (params.language != "en" || params.translate) {
                     params.language = "en";
@@ -838,23 +739,11 @@ int main(int argc, char ** argv) {
             if (params.detect_language) {
                 params.language = "auto";
             }
-            fprintf(stderr, "%s: processing '%s' (%d samples, %.1f sec), %d threads, %d processors, lang = %s, task = %s, %stimestamps = %d ...\n",
-                    __func__, filename.c_str(), int(pcmf32.size()), float(pcmf32.size())/WHISPER_SAMPLE_RATE,
-                    params.n_threads, params.n_processors,
-                    params.language.c_str(),
-                    params.translate ? "translate" : "transcribe",
-                    params.tinydiarize ? "tdrz = 1, " : "",
-                    params.no_timestamps ? 0 : 1);
-
-            fprintf(stderr, "\n");
         }
         // run the inference
         {
-            printf("Running whisper.cpp inference on %s\n", filename.c_str());
             whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-
             wparams.strategy = params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY;
-
             wparams.print_realtime   = false;
             wparams.print_progress   = params.print_progress;
             wparams.print_timestamps = !params.no_timestamps;
@@ -866,27 +755,22 @@ int main(int argc, char ** argv) {
             wparams.n_max_text_ctx   = params.max_context >= 0 ? params.max_context : wparams.n_max_text_ctx;
             wparams.offset_ms        = params.offset_t_ms;
             wparams.duration_ms      = params.duration_ms;
-
             wparams.thold_pt         = params.word_thold;
             wparams.max_len          = params.max_len == 0 ? 60 : params.max_len;
             wparams.split_on_word    = params.split_on_word;
             wparams.audio_ctx        = params.audio_ctx;
-
             wparams.debug_mode       = params.debug_mode;
             wparams.tdrz_enable      = params.tinydiarize; // [TDRZ]
             wparams.initial_prompt   = params.prompt.c_str();
-            wparams.greedy.best_of        = params.best_of;
+            wparams.greedy.best_of   = params.best_of;
             wparams.beam_search.beam_size = params.beam_size;
-
             wparams.temperature      = params.temperature;
-            wparams.no_speech_thold = params.no_speech_thold;
+            wparams.no_speech_thold  = params.no_speech_thold;
             wparams.temperature_inc  = params.temperature_inc;
             wparams.entropy_thold    = params.entropy_thold;
             wparams.logprob_thold    = params.logprob_thold;
-
             wparams.no_timestamps    = params.no_timestamps;
-            wparams.token_timestamps = !params.no_timestamps && params.response_format == vjson_format;
-
+            wparams.token_timestamps = false;
             wparams.suppress_nst     = params.suppress_nst;
             wparams.single_segment   = params.single_segment;
 
@@ -930,158 +814,20 @@ int main(int argc, char ** argv) {
             }
         }
         // return results to user
-        if (params.response_format == text_format)
         {
             std::string results = output_str(ctx, params, pcmf32s);
-            res.set_content(results.c_str(), "text/html; charset=utf-8");
-        }
-        else if (params.response_format == srt_format)
-        {
-            std::stringstream ss;
-            const int n_segments = whisper_full_n_segments(ctx);
-            for (int i = 0; i < n_segments; ++i) {
-                const char * text = whisper_full_get_segment_text(ctx, i);
-                const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-                const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                std::string speaker = "";
-
-                if (params.diarize && pcmf32s.size() == 2)
-                {
-                    speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
-                }
-
-                ss << i + 1 + params.offset_n << "\n";
-                ss << to_timestamp(t0, true) << " --> " << to_timestamp(t1, true) << "\n";
-                ss << speaker << text << "\n\n";
-            }
-            res.set_content(ss.str(), "application/x-subrip");
-        } else if (params.response_format == vtt_format) {
-            std::stringstream ss;
-
-            ss << "WEBVTT\n\n";
-
-            const int n_segments = whisper_full_n_segments(ctx);
-            for (int i = 0; i < n_segments; ++i) {
-                const char * text = whisper_full_get_segment_text(ctx, i);
-                const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
-                const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
-                std::string speaker = "";
-
-                if (params.diarize && pcmf32s.size() == 2)
-                {
-                    speaker = estimate_diarization_speaker(pcmf32s, t0, t1, true);
-                    speaker.insert(0, "<v Speaker");
-                    speaker.append(">");
-                }
-
-                ss << to_timestamp(t0) << " --> " << to_timestamp(t1) << "\n";
-                ss << speaker << text << "\n\n";
-            }
-            res.set_content(ss.str(), "text/vtt");
-        } else if (params.response_format == vjson_format) {
-            /* try to match openai/whisper's Python format */
-            std::string results = output_str(ctx, params, pcmf32s);
-            json jres = json{
-                {"task", params.translate ? "translate" : "transcribe"},
-                {"language", whisper_lang_str_full(whisper_full_lang_id(ctx))},
-                {"duration", float(pcmf32.size())/WHISPER_SAMPLE_RATE},
-                {"text", results},
-                {"segments", json::array()}
-            };
-            const int n_segments = whisper_full_n_segments(ctx);
-            for (int i = 0; i < n_segments; ++i)
-            {
-                json segment = json{
-                    {"id", i},
-                    {"text", whisper_full_get_segment_text(ctx, i)},
-                };
-
-                if (!params.no_timestamps) {
-                    segment["start"] = whisper_full_get_segment_t0(ctx, i) * 0.01;
-                    segment["end"] = whisper_full_get_segment_t1(ctx, i) * 0.01;
-                }
-
-                float total_logprob = 0;
-                const int n_tokens = whisper_full_n_tokens(ctx, i);
-                for (int j = 0; j < n_tokens; ++j) {
-                    whisper_token_data token = whisper_full_get_token_data(ctx, i, j);
-                    if (token.id >= whisper_token_eot(ctx)) {
-                        continue;
-                    }
-
-                    segment["tokens"].push_back(token.id);
-                    json word = json{{"word", whisper_full_get_token_text(ctx, i, j)}};
-                    if (!params.no_timestamps) {
-                        word["start"] = token.t0 * 0.01;
-                        word["end"] = token.t1 * 0.01;
-                        word["t_dtw"] = token.t_dtw;
-                    }
-                    word["probability"] = token.p;
-                    total_logprob += token.plog;
-                    segment["words"].push_back(word);
-                }
-
-                segment["temperature"] = params.temperature;
-                segment["avg_logprob"] = total_logprob / n_tokens;
-
-                // TODO compression_ratio and no_speech_prob are not implemented yet
-                // segment["compression_ratio"] = 0;
-                segment["no_speech_prob"] = whisper_full_get_segment_no_speech_prob(ctx, i);
-
-                jres["segments"].push_back(segment);
-            }
-            res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace),
-                            "application/json");
-        }
-        // TODO add more output formats
-        else
-        {
-            std::string results = output_str(ctx, params, pcmf32s);
+            std::pair<int, int> index_score{-1, 0};
+            json jres = json{{"text", results}};
             if (!vocab.empty()) {
                 auto tokens = tokenize_input(ctx, s_tokens, results);
-                if (tokens.size() > 1) {
-                    int index = match_tokens(v_tokens, tokens);
-                    if (index != -1) results = vocab[index];
-                }
+                if (tokens.size() > 1) index_score = match_tokens(v_tokens, tokens);
             }
-            json jres = json{{"text", results}};
+            if (index_score.first != -1)
+                jres = json{{"text", vocab[index_score.first]}, {"score", index_score.second}};
             res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace), "application/json");
         }
         // reset params to their defaults
         params = default_params;
-    });
-    svr.Post(sparams.request_path + "/load", [&](const Request &req, Response &res){
-        std::lock_guard<std::mutex> lock(whisper_mutex);
-        if (!req.has_file("model"))
-        {
-            fprintf(stderr, "error: no 'model' field in the request\n");
-            const std::string error_resp = "{\"error\":\"no 'model' field in the request\"}";
-            res.set_content(error_resp, "application/json");
-            return;
-        }
-        std::string model = req.get_file_value("model").content;
-        if (!is_file_exist(model.c_str()))
-        {
-            fprintf(stderr, "error: 'model': %s not found!\n", model.c_str());
-            const std::string error_resp = "{\"error\":\"model not found!\"}";
-            res.set_content(error_resp, "application/json");
-            return;
-        }
-        // clean up
-        whisper_free(ctx);
-        // whisper init
-        ctx = whisper_init_from_file_with_params(model.c_str(), cparams);
-        // TODO perhaps load prior model here instead of exit
-        if (ctx == nullptr) {
-            fprintf(stderr, "error: model init  failed, no model loaded must exit\n");
-            exit(1);
-        }
-        // initialize openvino encoder. this has no effect on whisper.cpp builds that don't have OpenVINO configured
-        whisper_ctx_init_openvino_encoder(ctx, nullptr, params.openvino_encode_device.c_str(), nullptr);
-
-        const std::string success = "Load was successful!";
-        res.set_content(success, "application/text");
-        // check if the model is in the file system
     });
 
     svr.set_exception_handler([](const Request &, Response &res, std::exception_ptr ep) {
@@ -1119,7 +865,7 @@ int main(int argc, char ** argv) {
     // Set the base directory for serving static files
     svr.set_base_dir(sparams.public_path);
     // to make it ctrl+clickable:
-    printf("\nwhisper server listening at http://%s:%d\n\n", sparams.hostname.c_str(), sparams.port);
+    printf("\n%s (wserv) listening at http://%s:%d\n", now().c_str(), sparams.hostname.c_str(), sparams.port);
 
     if (!svr.listen_after_bind())
     {
