@@ -29,7 +29,7 @@ namespace {
 struct server_params
 {
     std::string hostname = "0.0.0.0";
-    std::string public_path = "server/";
+    std::string public_path = "/data/rt/pub";
     std::string request_path = "";
     std::string inference_path = "/rt";
 
@@ -315,7 +315,7 @@ void whisper_print_segment_callback(struct whisper_context * ctx, struct whisper
             t1 = whisper_full_get_segment_t1(ctx, i);
         }
         if (!params.no_timestamps) {
-            printf("%s (wserv) [%s --> %s]  ", now().c_str(), to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
+            printf("[%s --> %s]  ", to_timestamp(t0).c_str(), to_timestamp(t1).c_str());
         }
         if (params.diarize && pcmf32s.size() == 2) {
             speaker = estimate_diarization_speaker(pcmf32s, t0, t1);
@@ -367,110 +367,35 @@ std::string output_str(struct whisper_context * ctx, const whisper_params & para
     return result.str();
 }
 
-bool parse_str_to_bool(const std::string & s) {
-    if (s == "true" || s == "1" || s == "yes" || s == "y") {
-        return true;
-    }
-    return false;
-}
-
 void get_req_parameters(const Request & req, whisper_params & params)
 {
-    if (req.has_file("offset_t"))
-    {
-        params.offset_t_ms = std::stoi(req.get_file_value("offset_t").content);
-    }
-    if (req.has_file("offset_n"))
-    {
-        params.offset_n = std::stoi(req.get_file_value("offset_n").content);
-    }
     if (req.has_file("duration"))
     {
         params.duration_ms = std::stoi(req.get_file_value("duration").content);
     }
-    if (req.has_file("max_context"))
+    if (req.has_file("ac"))
     {
-        params.max_context = std::stoi(req.get_file_value("max_context").content);
+        params.audio_ctx = std::stof(req.get_file_value("ac").content);
     }
-    if (req.has_file("max_len"))
+    if (req.has_file("et"))
     {
-        params.max_len = std::stoi(req.get_file_value("max_len").content);
+        params.entropy_thold = std::stof(req.get_file_value("et").content);
     }
-    if (req.has_file("best_of"))
+    if (req.has_file("lpt"))
     {
-        params.best_of = std::stoi(req.get_file_value("best_of").content);
+        params.logprob_thold = std::stof(req.get_file_value("lpt").content);
     }
-    if (req.has_file("beam_size"))
+    if (req.has_file("nth"))
     {
-        params.beam_size = std::stoi(req.get_file_value("beam_size").content);
+        params.no_speech_thold = std::stof(req.get_file_value("nth").content);
     }
-    if (req.has_file("audio_ctx"))
+    if (req.has_file("lang"))
     {
-        params.audio_ctx = std::stof(req.get_file_value("audio_ctx").content);
-    }
-    if (req.has_file("word_thold"))
-    {
-        params.word_thold = std::stof(req.get_file_value("word_thold").content);
-    }
-    if (req.has_file("entropy_thold"))
-    {
-        params.entropy_thold = std::stof(req.get_file_value("entropy_thold").content);
-    }
-    if (req.has_file("logprob_thold"))
-    {
-        params.logprob_thold = std::stof(req.get_file_value("logprob_thold").content);
-    }
-    if (req.has_file("debug_mode"))
-    {
-        params.debug_mode = parse_str_to_bool(req.get_file_value("debug_mode").content);
-    }
-    if (req.has_file("translate"))
-    {
-        params.translate = parse_str_to_bool(req.get_file_value("translate").content);
-    }
-    if (req.has_file("diarize"))
-    {
-        params.diarize = parse_str_to_bool(req.get_file_value("diarize").content);
-    }
-    if (req.has_file("tinydiarize"))
-    {
-        params.tinydiarize = parse_str_to_bool(req.get_file_value("tinydiarize").content);
-    }
-    if (req.has_file("split_on_word"))
-    {
-        params.split_on_word = parse_str_to_bool(req.get_file_value("split_on_word").content);
-    }
-    if (req.has_file("no_timestamps"))
-    {
-        params.no_timestamps = parse_str_to_bool(req.get_file_value("no_timestamps").content);
-    }
-    if (req.has_file("language"))
-    {
-        params.language = req.get_file_value("language").content;
-    }
-    if (req.has_file("detect_language"))
-    {
-        params.detect_language = parse_str_to_bool(req.get_file_value("detect_language").content);
+        params.language = req.get_file_value("lang").content;
     }
     if (req.has_file("prompt"))
     {
         params.prompt = req.get_file_value("prompt").content;
-    }
-    if (req.has_file("temperature"))
-    {
-        params.temperature = std::stof(req.get_file_value("temperature").content);
-    }
-    if (req.has_file("temperature_inc"))
-    {
-        params.temperature_inc = std::stof(req.get_file_value("temperature_inc").content);
-    }
-    if (req.has_file("suppress_non_speech"))
-    {
-        params.suppress_nst = parse_str_to_bool(req.get_file_value("suppress_non_speech").content);
-    }
-    if (req.has_file("suppress_nst"))
-    {
-        params.suppress_nst = parse_str_to_bool(req.get_file_value("suppress_nst").content);
     }
 }
 
@@ -508,7 +433,6 @@ std::pair<int, int> match_tokens(std::vector<std::vector<whisper_token>> & allow
     int index = -1;
     float score = 0.0f;
     std::vector<whisper_token> intersec;
-
     for (int i = 0; i < (int) allowed.size(); ++i ) {
         std::set_intersection(allowed[i].begin(), allowed[i].end(), candidate.begin(), candidate.end(), std::back_inserter(intersec));
         float jaccard = ((float) intersec.size()) / (allowed[i].size() + candidate.size() - intersec.size());
@@ -518,12 +442,10 @@ std::pair<int, int> match_tokens(std::vector<std::vector<whisper_token>> & allow
         }
         intersec.clear();
     }
-    printf("%s (wserv) match(%d,%d) = %.3f\n", now().c_str(), (int) allowed[index].size(), (int) candidate.size(), score);
     return std::make_pair(index, (int)(1000 * score));
 }
 
-std::vector<whisper_token> tokenize_input(struct whisper_context * ctx, const std::set<whisper_token> & s_tokens, const std::string & inp) {
-    auto text = normalize_text(inp);
+std::vector<whisper_token> tokenize_input(struct whisper_context * ctx, const std::set<whisper_token> & s_tokens, const std::string & text) {
     std::vector<whisper_token> tokens, out;
     tokens.resize(1024);
     const int n = whisper_tokenize(ctx, text.c_str(), tokens.data(), 1024);
@@ -816,14 +738,21 @@ int main(int argc, char ** argv) {
         // return results to user
         {
             std::string results = output_str(ctx, params, pcmf32s);
-            std::pair<int, int> index_score{-1, 0};
             json jres = json{{"text", results}};
             if (!vocab.empty()) {
-                auto tokens = tokenize_input(ctx, s_tokens, results);
-                if (tokens.size() > 1) index_score = match_tokens(v_tokens, tokens);
+                std::pair<int, int> index_score{-1, 0};
+                std::string text = normalize_text(results);
+                auto tokens = tokenize_input(ctx, s_tokens, text);
+                if (tokens.size() > 1) {
+                    index_score = match_tokens(v_tokens, tokens);
+                }
+                if (index_score.first != -1) {
+                    fprintf(stderr, "%s (wserv) [%s] -> [%s] score = %d\n", now().c_str(), text.c_str(), vocab[index_score.first].c_str(), index_score.second);
+                    jres = json{{"text", vocab[index_score.first]}, {"score", index_score.second}};
+                } else {
+                    fprintf(stderr, "%s (wserv) [%s] not matched to vocab\n", now().c_str(), text.c_str());
+                }
             }
-            if (index_score.first != -1)
-                jres = json{{"text", vocab[index_score.first]}, {"score", index_score.second}};
             res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace), "application/json");
         }
         // reset params to their defaults
