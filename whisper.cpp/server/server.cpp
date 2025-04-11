@@ -16,7 +16,6 @@
 #include <unicode/regex.h>
 #include <unicode/unistr.h>
 
-
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
@@ -53,11 +52,11 @@ struct whisper_params {
     int32_t beam_size     = -1;
     int32_t audio_ctx     = 0;
 
-    float word_thold      =  0.01f;
-    float entropy_thold   =  2.40f;
+    float word_thold      = 0.01f;
+    float entropy_thold   = 2.40f;
     float logprob_thold   = -1.00f;
-    float temperature     =  0.00f;
-    float temperature_inc =  0.20f;
+    float temperature     = 0.00f;
+    float temperature_inc = 0.20f;
     float no_speech_thold = 0.6f;
 
     bool debug_mode      = false;
@@ -117,7 +116,7 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -ml N,     --max-len N         [%-7d] maximum segment length in characters\n",           params.max_len);
     fprintf(stderr, "  -sow,      --split-on-word     [%-7s] split on word rather than on token\n",             params.split_on_word ? "true" : "false");
     fprintf(stderr, "  -wt N,     --word-thold N      [%-7.2f] word timestamp probability threshold\n",         params.word_thold);
-    fprintf(stderr, "  -et N,     --entropy-thold N   [%-7.2f] entropy threshold for decoder fail\n",           params.entropy_thold);
+    fprintf(stderr, "  -et N,     --entropy-thold N   [%-7.2f] compression ratio threshold for decoder fail\n", params.entropy_thold);
     fprintf(stderr, "  -lpt N,    --logprob-thold N   [%-7.2f] log probability threshold for decoder fail\n",   params.logprob_thold);
     fprintf(stderr, "  -debug,    --debug-mode        [%-7s] enable debug mode (eg. dump log_mel)\n",           params.debug_mode ? "true" : "false");
     fprintf(stderr, "  -tr,       --translate         [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
@@ -259,7 +258,6 @@ bool convert_to_wav(const std::string & temp_filename, std::string & error_resp)
 std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s, int64_t t0, int64_t t1, bool id_only = false) {
     std::string speaker = "";
     const int64_t n_samples = pcmf32s[0].size();
-
     const int64_t is0 = timestamp_to_sample(t0, n_samples, WHISPER_SAMPLE_RATE);
     const int64_t is1 = timestamp_to_sample(t1, n_samples, WHISPER_SAMPLE_RATE);
 
@@ -270,7 +268,6 @@ std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s
         energy0 += fabs(pcmf32s[0][j]);
         energy1 += fabs(pcmf32s[1][j]);
     }
-
     if (energy0 > 1.1*energy1) {
         speaker = "0";
     } else if (energy1 > 1.1*energy0) {
@@ -278,14 +275,11 @@ std::string estimate_diarization_speaker(std::vector<std::vector<float>> pcmf32s
     } else {
         speaker = "?";
     }
-
     //printf("is0 = %lld, is1 = %lld, energy0 = %f, energy1 = %f, speaker = %s\n", is0, is1, energy0, energy1, speaker.c_str());
-
     if (!id_only) {
         speaker.insert(0, "(speaker ");
         speaker.append(")");
     }
-
     return speaker;
 }
 
@@ -373,21 +367,21 @@ void get_req_parameters(const Request & req, whisper_params & params)
     {
         params.duration_ms = std::stoi(req.get_file_value("duration").content);
     }
-    if (req.has_file("ac"))
+    if (req.has_file("actx"))
     {
-        params.audio_ctx = std::stof(req.get_file_value("ac").content);
+        params.audio_ctx = std::stof(req.get_file_value("actx").content);
     }
-    if (req.has_file("et"))
+    if (req.has_file("compress"))
     {
-        params.entropy_thold = std::stof(req.get_file_value("et").content);
+        params.entropy_thold = std::stof(req.get_file_value("compress").content);
     }
-    if (req.has_file("lpt"))
+    if (req.has_file("logprob"))
     {
-        params.logprob_thold = std::stof(req.get_file_value("lpt").content);
+        params.logprob_thold = std::stof(req.get_file_value("logprob").content);
     }
-    if (req.has_file("nth"))
+    if (req.has_file("nospeech"))
     {
-        params.no_speech_thold = std::stof(req.get_file_value("nth").content);
+        params.no_speech_thold = std::stof(req.get_file_value("nospeech").content);
     }
     if (req.has_file("lang"))
     {
@@ -429,13 +423,13 @@ std::vector<std::string> read_vocab(const std::string & fname) {
     return vocab;
 }
 
-std::pair<int, int> match_tokens(std::vector<std::vector<whisper_token>> & allowed, std::vector<whisper_token> & candidate) {
+std::pair<int, int> match_tokens(std::vector<std::vector<whisper_token>> & v_tokens, std::vector<whisper_token> & tokens) {
     int index = -1;
     float score = 0.0f;
     std::vector<whisper_token> intersec;
-    for (int i = 0; i < (int) allowed.size(); ++i ) {
-        std::set_intersection(allowed[i].begin(), allowed[i].end(), candidate.begin(), candidate.end(), std::back_inserter(intersec));
-        float jaccard = ((float) intersec.size()) / (allowed[i].size() + candidate.size() - intersec.size());
+    for (int i = 0; i < (int) v_tokens.size(); ++i ) {
+        std::set_intersection(v_tokens[i].begin(), v_tokens[i].end(), tokens.begin(), tokens.end(), std::back_inserter(intersec));
+        float jaccard = ((float) intersec.size()) / (v_tokens[i].size() + tokens.size() - intersec.size());
         if (score < jaccard) {
             score = jaccard;
             index = i;
@@ -474,7 +468,7 @@ bool tokenize_vocab(struct whisper_context * ctx, std::vector<std::string> & voc
         std::sort(v_tokens.back().begin(), v_tokens.back().end());
     }
     if (vocab.size() == v_tokens.size()) {
-        printf("vocabulary tokenized: %d items, %d unique tokens\n", (int) v_tokens.size(), (int) s_tokens.size());
+        fprintf(stderr, "vocabulary tokenized: %d items, %d unique tokens\n", (int) v_tokens.size(), (int) s_tokens.size());
     } else {
         fprintf(stderr, "error: vocabulary (%d) not fully tokenized (%d)\n", (int) vocab.size(), (int) v_tokens.size());
         return false;
@@ -587,6 +581,11 @@ int main(int argc, char ** argv) {
     // store default params so we can reset after each inference request
     whisper_params default_params = params;
 
+    svr.Get(sparams.request_path + sparams.inference_path, [&](const Request &req, Response &res){
+        json jres = json{{"running", sparams.port}};
+        res.set_content(jres.dump(-1, ' ', false, json::error_handler_t::replace), "application/json");
+    });
+
     svr.Options(sparams.request_path + sparams.inference_path, [&](const Request &, Response &){
     });
 
@@ -608,7 +607,7 @@ int main(int argc, char ** argv) {
         get_req_parameters(req, params);
 
         std::string filename{audio_file.filename};
-        printf("%s (wserv) received request: %s\n", now().c_str(), filename.c_str());
+        fprintf(stderr, "%s (wserv) received request: %s\n", now().c_str(), filename.c_str());
 
         // audio arrays
         std::vector<float> pcmf32;               // mono-channel F32 PCM
@@ -648,7 +647,6 @@ int main(int argc, char ** argv) {
                 return;
             }
         }
-
         // print some info about the processing
         {
             if (!whisper_is_multilingual(ctx)) {
@@ -794,7 +792,7 @@ int main(int argc, char ** argv) {
     // Set the base directory for serving static files
     svr.set_base_dir(sparams.public_path);
     // to make it ctrl+clickable:
-    printf("\n%s (wserv) listening at http://%s:%d\n", now().c_str(), sparams.hostname.c_str(), sparams.port);
+    fprintf(stderr, "\n%s (wserv) listening at http://%s:%d\n", now().c_str(), sparams.hostname.c_str(), sparams.port);
 
     if (!svr.listen_after_bind())
     {
